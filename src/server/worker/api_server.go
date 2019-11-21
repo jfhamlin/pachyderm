@@ -940,7 +940,7 @@ func (a *APIServer) worker() {
 			}
 			dit, err := datum.NewIterator(pachClient, jobInfo.Input)
 			if err != nil {
-				return fmt.Errorf("error from datum.NewFactory: %v", err)
+				return fmt.Errorf("error from datum.NewIterator: %v", err)
 			}
 
 			// Compute the datums to skip

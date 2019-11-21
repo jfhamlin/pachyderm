@@ -75,6 +75,49 @@ func forEachCommit(
 	)
 }
 
+// ensureJob loads an existing job for the given commit in the pipeline, or
+// creates it if there is none. If more than one such job exists, an error will
+// be generated.
+func ensureJob(
+	pachClient *client.APIClient,
+	pipelineInfo *pps.PipelineInfo,
+	commitInfo *pfs.CommitInfo,
+	logger logs.TaggedLogger,
+) (*pps.JobInfo, error) {
+	// Check if a job was previously created for this commit. If not, make one
+	var jobInfo *pps.JobInfo // job for commitInfo (new or old)
+	jobInfos, err := pachClient.ListJob("", nil, commitInfo.Commit, -1, true)
+	if err != nil {
+		return err
+	}
+	if len(jobInfos) > 1 {
+		return nil, fmt.Errorf("multiple jobs found for commit: %s/%s", commitInfo.Commit.Repo.Name, commitInfo.Commit.ID)
+	} else if len(jobInfos) < 1 {
+		var statsCommit *pfs.Commit
+		if pipelineInfo.EnableStats {
+			for _, commitRange := range commitInfo.Subvenance {
+				if commitRange.Lower.Repo.Name == pipelineInfo.Pipeline.Name && commitRange.Upper.Repo.Name == pipelineInfo.Pipeline.Name {
+					statsCommit = commitRange.Lower
+				}
+			}
+		}
+		job, err := pachClient.CreateJob(pipelineInfo.Pipeline.Name, commitInfo.Commit, statsCommit)
+		if err != nil {
+			return nil, err
+		}
+		logger.Logf("created new job %q for output commit %q", job.ID, commitInfo.Commit.ID)
+		// get jobInfo to look up spec commit, pipeline version, etc (if this
+		// worker is stale and about to be killed, the new job may have a newer
+		// pipeline version than the master. Or if the commit is stale, it may
+		// have an older pipeline version than the master)
+		return pachClient.InspectJob(job.ID, false)
+	}
+
+	// get latest job state
+	logger.Logf("found existing job %q for output commit %q", jobInfos[0].Job.ID, commitInfo.Commit.ID)
+	return pachClient.InspectJob(jobInfos[0].Job.ID, false)
+}
+
 func runTransform(
 	pachClient *client.APIClient,
 	pipelineInfo *pps.PipelineInfo,
@@ -82,43 +125,9 @@ func runTransform(
 	driver driver.Driver,
 ) error {
 	return forEachCommit(pachClient, pipelineInfo, driver, func(commitInfo *pfs.CommitInfo) error {
-		// Check if a job was previously created for this commit. If not, make one
-		var jobInfo *pps.JobInfo // job for commitInfo (new or old)
-		jobInfos, err := pachClient.ListJob("", nil, commitInfo.Commit, -1, true)
+		jobInfo, err := ensureJob(pachClient, pipelineInfo, commitInfo, logger)
 		if err != nil {
 			return err
-		}
-		if len(jobInfos) > 1 {
-			return fmt.Errorf("multiple jobs found for commit: %s/%s", commitInfo.Commit.Repo.Name, commitInfo.Commit.ID)
-		} else if len(jobInfos) < 1 {
-			var statsCommit *pfs.Commit
-			if pipelineInfo.EnableStats {
-				for _, commitRange := range commitInfo.Subvenance {
-					if commitRange.Lower.Repo.Name == pipelineInfo.Pipeline.Name && commitRange.Upper.Repo.Name == pipelineInfo.Pipeline.Name {
-						statsCommit = commitRange.Lower
-					}
-				}
-			}
-			job, err := pachClient.CreateJob(pipelineInfo.Pipeline.Name, commitInfo.Commit, statsCommit)
-			if err != nil {
-				return err
-			}
-			logger.Logf("creating new job %q for output commit %q", job.ID, commitInfo.Commit.ID)
-			// get jobInfo to look up spec commit, pipeline version, etc (if this
-			// worker is stale and about to be killed, the new job may have a newer
-			// pipeline version than the master. Or if the commit is stale, it may
-			// have an older pipeline version than the master)
-			jobInfo, err = pachClient.InspectJob(job.ID, false)
-			if err != nil {
-				return err
-			}
-		} else {
-			// get latest job state
-			jobInfo, err = pachClient.InspectJob(jobInfos[0].Job.ID, false)
-			logger.Logf("found existing job %q for output commit %q", jobInfo.Job.ID, commitInfo.Commit.ID)
-			if err != nil {
-				return err
-			}
 		}
 
 		switch {
@@ -146,7 +155,7 @@ func runTransform(
 			// parents to finish)
 			if err := driver.UpdateJobState(pachClient.Ctx(), jobInfo.Job.ID,
 				pps.JobState_JOB_KILLED, "pipeline has been updated"); err != nil {
-				return fmt.Errorf("could not kill stale job: %v", err)
+				return fmt.Errorf("failed to kill stale job: %v", err)
 			}
 			return nil
 		case jobInfo.PipelineVersion > pipelineInfo.Version:
@@ -291,7 +300,7 @@ func waitJob(
 			}
 			return nil
 		}
-		// Create a datum factory pointing at the job's inputs and split up the
+		// Create a datum iterator pointing at the job's inputs and split up the
 		// input data into chunks
 		dit, err := datum.NewIterator(pachClient, jobInfo.Input)
 		if err != nil {
@@ -465,11 +474,6 @@ func waitJob(
 		return driver.UpdateJobState(ctx, jobInfo.Job.ID, pps.JobState_JOB_SUCCESS, "")
 	}, backoff.NewInfiniteBackOff(), func(err error, d time.Duration) error {
 		logger.Logf("error in waitJob %v, retrying in %v", err, d)
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
 		// Increment the job's restart count
 		_, err = driver.NewSTM(ctx, func(stm col.STM) error {
 			jobs := driver.Jobs().ReadWrite(stm)
@@ -533,7 +537,7 @@ func failedInputs(pachClient *client.APIClient, jobInfo *pps.JobInfo) ([]string,
 				BlockState: pfs.CommitState_FINISHED,
 			})
 		if err != nil && vistErr == nil {
-			vistErr = fmt.Errorf("error blocking on commit %s/%s: %v",
+			vistErr = fmt.Errorf("error blocking on commit %s@%s: %v",
 				commit.Repo.Name, commit.ID, err)
 			return
 		}
