@@ -368,7 +368,17 @@ func (a *APIServer) processChunk(ctx context.Context, jobID string, low, high in
 	return err
 }
 
-func (a *APIServer) mergeDatums(jobCtx context.Context, pachClient *client.APIClient, jobInfo *pps.JobInfo, jobID string, plan *common.Plan, logger logs.TaggedLogger, dit datum.Iterator, skip map[string]struct{}, useParentHashTree bool) (retErr error) {
+func (a *APIServer) mergeDatums(
+	jobCtx context.Context,
+	pachClient *client.APIClient,
+	jobInfo *pps.JobInfo,
+	jobID string,
+	plan *common.Plan,
+	logger logs.TaggedLogger,
+	dit datum.Iterator,
+	skip map[string]struct{},
+	useParentHashTree bool,
+) (retErr error) {
 	for {
 		if err := func() error {
 			// if this worker is not responsible for a shard, it waits to be assigned one or for the job to finish
@@ -1118,7 +1128,7 @@ func (a *APIServer) processDatums(
 				statsTree = hashtree.NewUnordered(statsRoot)
 				// Write job id to stats tree
 				statsTree.PutFile(fmt.Sprintf("job:%s", jobInfo.Job.ID), nil, 0)
-				// Write index in datum factory to stats tree
+				// Write index in datum iterator to stats tree
 				object, size, err := pachClient.PutObject(strings.NewReader(fmt.Sprint(int(datumIdx))))
 				if err != nil {
 					return err
@@ -1276,7 +1286,17 @@ func (a *APIServer) cacheHashtree(pachClient *client.APIClient, tag string, datu
 	return nil
 }
 
-func (a *APIServer) writeStats(pachClient *client.APIClient, objClient obj.Client, tag string, stats *pps.ProcessStats, logger logs.TaggedLogger, inputTree, outputTree *hashtree.Ordered, statsTree *hashtree.Unordered, datumIdx int64) (retErr error) {
+func (a *APIServer) writeStats(
+	pachClient *client.APIClient,
+	objClient obj.Client,
+	tag string,
+	stats *pps.ProcessStats,
+	logger logs.TaggedLogger,
+	inputTree *hashtree.Ordered,
+	outputTree *hashtree.Ordered,
+	statsTree *hashtree.Unordered,
+	datumIdx int64,
+) (retErr error) {
 	// Store stats and add stats file
 	marshaler := &jsonpb.Marshaler{}
 	statsString, err := marshaler.MarshalToString(stats)
