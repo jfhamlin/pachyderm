@@ -146,8 +146,9 @@ func (d *driver) merge(ctx context.Context, outputPath string, prefixes []string
 		return err
 	}
 	// Setup and run master.
-	m := work.NewMaster(d.etcdClient, d.prefix, func(_ context.Context, _ *work.Task) error { return nil })
-	if err := m.Run(ctx, task); err != nil {
+	collectFunc := func(_ context.Context, _ *work.Task) error { return nil }
+	m := work.NewMaster(d.etcdClient, d.prefix)
+	if err := m.Run(ctx, task, collectFunc); err != nil {
 		return err
 	}
 	inputPrefix := path.Join(tmpPrefix, prefixes[0])
