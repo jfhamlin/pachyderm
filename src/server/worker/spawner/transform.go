@@ -28,6 +28,11 @@ import (
 	"github.com/pachyderm/pachyderm/src/server/worker/logs"
 )
 
+// synchronously start job for commit - this will do the initial task creation
+// waits until the number of running jobs
+// asynchronously wait for datums and then merge
+// semaphore/pool to control how many
+
 // forEachCommit listens for each READY output commit in the pipeline, and calls
 // the given callback once for each such commit, synchronously.
 func forEachCommit(
@@ -118,56 +123,100 @@ func ensureJob(
 	return pachClient.InspectJob(jobInfos[0].Job.ID, false)
 }
 
+type pendingJob struct {
+	job *pps.JobInfo
+	dit *datum.Iterator
+	datumHashes map[string]struct{}
+}
+
+type registry struct {
+	mutex sync.Mutex
+	datumSkip map[string]struct{}
+	jobs []pendingJob
+	jobChan chan *pendingJob
+}
+
+func (reg *registry) Close() {
+	close(reg.jobChan)
+}
+
+func newRegistry(
+	pachClient *client.APIClient,
+	pipelineInfo *pps.PipelineInfo,
+	logger logs.TaggedLogger,
+	driver driver.Driver,
+) {
+	jobChan := make(chan *pendingJob, 1)
+
+	// Start goroutines to supervise job completion, accepting work from workChan
+	for range  {
+		go superviseJob(pachClient, pipelineInfo, logger, driver, registry)
+	}
+
+	return &registry{
+		jobChan: jobChan,
+	}
+}
+
+func (reg *registry) NewJob() (*pendingJob, error) {
+	jobInfo, err := ensureJob(pachClient, pipelineInfo, commitInfo, logger)
+	if err != nil {
+		return err
+	}
+
+	// Create pendingJob struct
+
+
+
+	switch {
+	case ppsutil.IsTerminal(jobInfo.State):
+		if jobInfo.StatsCommit != nil {
+			if _, err := pachClient.PfsAPIClient.FinishCommit(pachClient.Ctx(), &pfs.FinishCommitRequest{
+				Commit: jobInfo.StatsCommit,
+				Empty:  true,
+			}); err != nil && !pfsserver.IsCommitFinishedErr(err) {
+				return err
+			}
+		}
+		if _, err := pachClient.PfsAPIClient.FinishCommit(pachClient.Ctx(), &pfs.FinishCommitRequest{
+			Commit: jobInfo.OutputCommit,
+			Empty:  true,
+		}); err != nil && !pfsserver.IsCommitFinishedErr(err) {
+			return err
+		}
+		// ignore finished jobs (e.g. old pipeline & already killed)
+		return nil
+	case jobInfo.PipelineVersion < pipelineInfo.Version:
+		// kill unfinished jobs from old pipelines (should generally be cleaned
+		// up by PPS master, but the PPS master can fail, and if these jobs
+		// aren't killed, future jobs will hang indefinitely waiting for their
+		// parents to finish)
+		if err := driver.UpdateJobState(pachClient.Ctx(), jobInfo.Job.ID,
+			pps.JobState_JOB_KILLED, "pipeline has been updated"); err != nil {
+			return fmt.Errorf("failed to kill stale job: %v", err)
+		}
+		return nil
+	case jobInfo.PipelineVersion > pipelineInfo.Version:
+		return fmt.Errorf("job %s's version (%d) greater than pipeline's "+
+			"version (%d), this should automatically resolve when the worker "+
+			"is updated", jobInfo.Job.ID, jobInfo.PipelineVersion, pipelineInfo.Version)
+	}
+
+	// Send pending job off to supervisor
+}
+
 func runTransform(
 	pachClient *client.APIClient,
 	pipelineInfo *pps.PipelineInfo,
 	logger logs.TaggedLogger,
 	driver driver.Driver,
 ) error {
+	reg := newRegistry(pachClient, pipelineInfo, logger, driver)
+	defer close(workChan)
+
 	return forEachCommit(pachClient, pipelineInfo, driver, func(commitInfo *pfs.CommitInfo) error {
-		jobInfo, err := ensureJob(pachClient, pipelineInfo, commitInfo, logger)
-		if err != nil {
-			return err
-		}
-
-		switch {
-		case ppsutil.IsTerminal(jobInfo.State):
-			if jobInfo.StatsCommit != nil {
-				if _, err := pachClient.PfsAPIClient.FinishCommit(pachClient.Ctx(), &pfs.FinishCommitRequest{
-					Commit: jobInfo.StatsCommit,
-					Empty:  true,
-				}); err != nil && !pfsserver.IsCommitFinishedErr(err) {
-					return err
-				}
-			}
-			if _, err := pachClient.PfsAPIClient.FinishCommit(pachClient.Ctx(), &pfs.FinishCommitRequest{
-				Commit: jobInfo.OutputCommit,
-				Empty:  true,
-			}); err != nil && !pfsserver.IsCommitFinishedErr(err) {
-				return err
-			}
-			// ignore finished jobs (e.g. old pipeline & already killed)
-			return nil
-		case jobInfo.PipelineVersion < pipelineInfo.Version:
-			// kill unfinished jobs from old pipelines (should generally be cleaned
-			// up by PPS master, but the PPS master can fail, and if these jobs
-			// aren't killed, future jobs will hang indefinitely waiting for their
-			// parents to finish)
-			if err := driver.UpdateJobState(pachClient.Ctx(), jobInfo.Job.ID,
-				pps.JobState_JOB_KILLED, "pipeline has been updated"); err != nil {
-				return fmt.Errorf("failed to kill stale job: %v", err)
-			}
-			return nil
-		case jobInfo.PipelineVersion > pipelineInfo.Version:
-			return fmt.Errorf("job %s's version (%d) greater than pipeline's "+
-				"version (%d), this should automatically resolve when the worker "+
-				"is updated", jobInfo.Job.ID, jobInfo.PipelineVersion, pipelineInfo.Version)
-		}
-
-		// Now that the jobInfo is persisted, wait until all input commits are
-		// ready, split the input datums into chunks and merge the results of
-		// chunks as they're processed
-		return waitJob(pachClient, pipelineInfo, logger, driver, jobInfo)
+		// Do some synchronous setup before handing the commit to a supervisor goroutine
+		return reg.StartJob(commitInfo)
 	})
 }
 

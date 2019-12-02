@@ -761,7 +761,13 @@ func (a *APIServer) getCommitDatums(ctx context.Context, pachClient *client.APIC
 	}
 }
 
-func (a *APIServer) getParentHashTree(ctx context.Context, pachClient *client.APIClient, objClient obj.Client, commit *pfs.Commit, merge int64) (io.ReadCloser, error) {
+func (a *APIServer) getParentHashTree(
+	ctx context.Context,
+	pachClient *client.APIClient,
+	objClient obj.Client,
+	commit *pfs.Commit,
+	merge int64,
+) (io.ReadCloser, error) {
 	parentCommitInfo, err := a.getParentCommitInfo(ctx, pachClient, commit)
 	if err != nil {
 		return nil, err
@@ -780,7 +786,12 @@ func (a *APIServer) getParentHashTree(ctx context.Context, pachClient *client.AP
 	return objClient.Reader(ctx, path, 0, 0)
 }
 
-func writeIndex(pachClient *client.APIClient, objClient obj.Client, tree *pfs.Object, idx []byte) (retErr error) {
+func writeIndex(
+	pachClient *client.APIClient,
+	objClient obj.Client,
+	tree *pfs.Object,
+	idx []byte,
+) (retErr error) {
 	info, err := pachClient.InspectObject(tree.Hash)
 	if err != nil {
 		return err
