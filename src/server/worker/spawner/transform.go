@@ -37,14 +37,14 @@ import (
 // the given callback once for each such commit, synchronously.
 func forEachCommit(
 	pachClient *client.APIClient,
-	pipelineInfo *pps.PipelineInfo,
 	driver driver.Driver,
 	cb func(*pfs.CommitInfo) error,
 ) error {
+	pi := driver.PipelineInfo()
 	return pachClient.SubscribeCommitF(
-		pipelineInfo.Pipeline.Name,
+		pi.Pipeline.Name,
 		"",
-		client.NewCommitProvenance(ppsconsts.SpecRepo, pipelineInfo.Pipeline.Name, pipelineInfo.SpecCommit.ID),
+		client.NewCommitProvenance(ppsconsts.SpecRepo, pi.Pipeline.Name, pi.SpecCommit.ID),
 		"",
 		pfs.CommitState_READY,
 		func(ci *pfs.CommitInfo) error {
@@ -158,15 +158,11 @@ func newRegistry(
 	}
 }
 
-func (reg *registry) NewJob() (*pendingJob, error) {
+func (reg *registry) StartJob() error {
 	jobInfo, err := ensureJob(pachClient, pipelineInfo, commitInfo, logger)
 	if err != nil {
 		return err
 	}
-
-	// Create pendingJob struct
-
-
 
 	switch {
 	case ppsutil.IsTerminal(jobInfo.State):
@@ -202,20 +198,38 @@ func (reg *registry) NewJob() (*pendingJob, error) {
 			"is updated", jobInfo.Job.ID, jobInfo.PipelineVersion, pipelineInfo.Version)
 	}
 
-	// Send pending job off to supervisor
+	// Create a datum iterator pointing at the job's inputs
+	dit, err := datum.NewIterator(pachClient, jobInfo.Input)
+	if err != nil {
+		return err
+	}
+
+	// Create pendingJob struct
+	pj := &pendingJob{
+		job: jobInfo,
+		dit: dit,
+		datumHashes: make(map[string]string{})
+		metaHashtree: &hashtree.Hashtree{}
+	}
+
+	// Send pending job off to supervisor, this will block until a supervisor
+	// goroutine is available, or we are canceled.
+	select {
+		reg.jobChan <- pj:
+			return nil
+		<- pachClient.Ctx().Done():
+			return pachClient.Ctx().Error()
+	}
 }
 
 func runTransform(
-	pachClient *client.APIClient,
-	pipelineInfo *pps.PipelineInfo,
 	logger logs.TaggedLogger,
 	driver driver.Driver,
 ) error {
-	reg := newRegistry(pachClient, pipelineInfo, logger, driver)
-	defer close(workChan)
+	reg := newRegistry(pachClient, logger, driver)
+	defer reg.Close()
 
-	return forEachCommit(pachClient, pipelineInfo, driver, func(commitInfo *pfs.CommitInfo) error {
-		// Do some synchronous setup before handing the commit to a supervisor goroutine
+	return forEachCommit(pachClient, driver, func(commitInfo *pfs.CommitInfo) error {
 		return reg.StartJob(commitInfo)
 	})
 }

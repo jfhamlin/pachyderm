@@ -20,8 +20,9 @@ import (
 
 // MockOptions is a basic data struct containing options used by the MockDriver
 type MockOptions struct {
-	NumWorkers int
-	EtcdPrefix string
+	NumWorkers   int
+	EtcdPrefix   string
+	PipelineInfo *pps.PipelineInfo
 }
 
 // MockDriver is an implementation of the Driver interface for use by tests.
@@ -90,6 +91,10 @@ func (md *MockDriver) Chunks(jobID string) col.Collection {
 // Merges returns a collection for the PPS merges data in etcd
 func (md *MockDriver) Merges(jobID string) col.Collection {
 	return col.NewCollection(md.etcdClient, path.Join(md.options.EtcdPrefix, mergePrefix, jobID), nil, &common.MergeState{}, nil, nil)
+}
+
+func (md *MockDriver) PipelineInfo() *pps.PipelineInfo {
+	return md.options.PipelineInfo
 }
 
 // InputDir returns the path used to hold the input filesets.  Inherit and

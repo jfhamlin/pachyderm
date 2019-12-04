@@ -72,6 +72,8 @@ type Driver interface {
 	Chunks(jobID string) col.Collection
 	Merges(jobID string) col.Collection
 
+	PipelineInfo() *pps.PipelineInfo
+
 	// Returns the path that will contain the input filesets for the job
 	InputDir() string
 
@@ -302,6 +304,10 @@ func (d *driver) Merges(jobID string) col.Collection {
 
 func (d *driver) GetExpectedNumWorkers() (int, error) {
 	return d.kubeWrapper.GetExpectedNumWorkers(d.pipelineInfo.ParallelismSpec)
+}
+
+func (d *driver) PipelineInfo() *pps.PipelineInfo {
+	return d.pipelineInfo
 }
 
 func (d *driver) InputDir() string {
