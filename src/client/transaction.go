@@ -273,7 +273,7 @@ func (c APIClient) RunBatchInTransaction(cb func(builder *TransactionBuilder) er
 		return nil, err
 	}
 
-	return c.BatchTransaction(tb.requests)
+	return c.BatchTransaction(c.Ctx(), &transaction.BatchTransactionRequest{Requests: tb.requests})
 }
 
 func (c *pfsBuilderClient) CreateRepo(ctx context.Context, req *pfs.CreateRepoRequest, opts ...grpc.CallOption) (*types.Empty, error) {
@@ -285,7 +285,7 @@ func (c *pfsBuilderClient) DeleteRepo(ctx context.Context, req *pfs.DeleteRepoRe
 	return nil, nil
 }
 func (c *pfsBuilderClient) StartCommit(ctx context.Context, req *pfs.StartCommitRequest, opts ...grpc.CallOption) (*pfs.Commit, error) {
-	// Note that since we are batching requests (no extra round-trips) - we do not
+	// Note that since we are batching requests (no extra round-trips), we do not
 	// have the commit id to return here. If you need an operation that relies
 	// upon the commit id, use ExecuteInTransaction instead.
 	c.tb.requests = append(c.tb.requests, &transaction.TransactionRequest{StartCommit: req})
@@ -305,6 +305,10 @@ func (c *pfsBuilderClient) CreateBranch(ctx context.Context, req *pfs.CreateBran
 }
 func (c *pfsBuilderClient) DeleteBranch(ctx context.Context, req *pfs.DeleteBranchRequest, opts ...grpc.CallOption) (*types.Empty, error) {
 	c.tb.requests = append(c.tb.requests, &transaction.TransactionRequest{DeleteBranch: req})
+	return nil, nil
+}
+func (c *ppsBuilderClient) UpdateJobState(ctx context.Context, req *pps.UpdateJobStateRequest, opts ...grpc.CallOption) (*types.Empty, error) {
+	c.tb.requests = append(c.tb.requests, &transaction.TransactionRequest{UpdateJobState: req})
 	return nil, nil
 }
 
@@ -602,7 +606,7 @@ func (c *adminBuilderClient) InspectCluster(ctx context.Context, req *types.Empt
 	return nil, unsupportedError("InspectCluster")
 }
 
-func (c *transactionBuilderClient) BatchTransaction(ctx context.Context, req *transaction.BatchTransactionRequest, opts ...grpc.CallOption) (*transaction.Transaction, error) {
+func (c *transactionBuilderClient) BatchTransaction(ctx context.Context, req *transaction.BatchTransactionRequest, opts ...grpc.CallOption) (*transaction.TransactionInfo, error) {
 	return nil, unsupportedError("BatchTransaction")
 }
 func (c *transactionBuilderClient) StartTransaction(ctx context.Context, req *transaction.StartTransactionRequest, opts ...grpc.CallOption) (*transaction.Transaction, error) {

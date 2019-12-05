@@ -535,3 +535,13 @@ func TestPropagateCommitRedux(t *testing.T) {
 	require.ElementsEqualUnderFn(t, expectProv(), commitInfoE.Provenance, provStr)
 	require.ElementsEqualUnderFn(t, expectSubv(commitC, commitD), commitInfoE.Subvenance, subvStr)
 }
+
+func TestBatchTransaction(t *testing.T) {
+	c := GetPachClient(t)
+
+	// Empty batch
+	info, err := c.RunBatchInTransaction(func(builder *client.TransactionBuilder) error {
+		return nil
+	})
+	require.NoError(err)
+}

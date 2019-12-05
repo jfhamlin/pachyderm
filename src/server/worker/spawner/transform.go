@@ -158,6 +158,10 @@ func newRegistry(
 	}
 }
 
+func finishJob(jobInfo *pps.JobInfo) error {
+
+}
+
 func (reg *registry) StartJob() error {
 	jobInfo, err := ensureJob(pachClient, pipelineInfo, commitInfo, logger)
 	if err != nil {

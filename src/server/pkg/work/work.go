@@ -180,12 +180,12 @@ func (w *Worker) processTask(ctx context.Context, task *Task, processFunc Proces
 		//		retErr = err
 		//	}
 		//}()
-		if err := w.processSubtasks(ctx, task); err != nil {
+		if err := w.processSubtasks(ctx, task, processFunc); err != nil {
 			return err
 		}
 		// Wait for a deletion event (ttl expired) before attempting to process the subtasks again.
 		return w.subtaskCol.ReadOnly(ctx).WatchOneF(task.Id, func(e *watch.Event) error {
-			return w.processSubtasks(ctx, task)
+			return w.processSubtasks(ctx, task, processFunc)
 		}, watch.WithFilterPut())
 	})
 	if err := eg.Wait(); err != nil {
@@ -198,12 +198,12 @@ func (w *Worker) processTask(ctx context.Context, task *Task, processFunc Proces
 	return nil
 }
 
-func (w *Worker) processSubtasks(ctx context.Context, task *Task) error {
+func (w *Worker) processSubtasks(ctx context.Context, task *Task, processFunc ProcessFunc) error {
 	for _, subtask := range task.Subtasks {
 		subtaskKey := path.Join(task.Id, subtask.Id)
 		subtaskInfo := &TaskInfo{}
 		if err := w.subtaskCol.Claim(ctx, subtaskKey, subtaskInfo, func(ctx context.Context) error {
-			if err := w.processFunc(ctx, task, subtask); err != nil {
+			if err := processFunc(ctx, task, subtask); err != nil {
 				return err
 			}
 			subtaskInfo.Task = subtask

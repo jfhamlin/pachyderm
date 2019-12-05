@@ -193,7 +193,9 @@ func deserialize(mergeAny, shardAny *types.Any) (*pfs.Merge, *pfs.Shard, error) 
 // because each pachd instance that errors here will lose its merge worker without an obvious
 // notification for the user (outside of the log message).
 func (d *driver) mergeWorker() {
-	w := work.NewWorker(d.etcdClient, d.prefix, func(ctx context.Context, task, subtask *work.Task) (retErr error) {
+	w := work.NewWorker(d.etcdClient, d.prefix)
+
+	err := w.Run(context.Background(), func(ctx context.Context, task, subtask *work.Task) (retErr error) {
 		merge, shard, err := deserialize(task.Data, subtask.Data)
 		if err != nil {
 			return err
@@ -205,7 +207,8 @@ func (d *driver) mergeWorker() {
 		}
 		return d.storage.Merge(ctx, outputPath, merge.Prefixes, index.WithRange(pathRange))
 	})
-	if err := w.Run(context.Background()); err != nil {
+
+	if err != nil {
 		log.Printf("error in merge worker: %v", err)
 	}
 }
