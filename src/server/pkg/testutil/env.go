@@ -15,6 +15,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/pachyderm/pachyderm/src/client"
+	authserver "github.com/pachyderm/pachyderm/src/server/auth/server"
 	authtesting "github.com/pachyderm/pachyderm/src/server/auth/testing"
 	pfsserver "github.com/pachyderm/pachyderm/src/server/pfs/server"
 	"github.com/pachyderm/pachyderm/src/server/pkg/hashtree"
@@ -205,7 +206,10 @@ func WithMockEnv(cb func(*MockEnv) error) error {
 		// TODO: supervise the PachClient connection and error the errgroup if they
 		// go down
 
-		return cb(mockEnv)
+		err = cb(mockEnv)
+		fmt.Printf("Shutting down mock env\n")
+		// time.Sleep(time.Minute * 1000)
+		return err
 	})
 }
 
@@ -215,6 +219,10 @@ func WithMockEnv(cb func(*MockEnv) error) error {
 // server endpoints.
 type RealEnv struct {
 	MockEnv
+	AuthServer        authserver.APIServer
+	PFSBlockServer    pfsserver.BlockAPIServer
+	PFSServer         pfsserver.APIServer
+	TransactionServer txnserver.APIServer
 }
 
 const (
@@ -227,8 +235,8 @@ const (
 // environment in order to spin up pipelines, which is not yet supported by this
 // package, but the other API servers work.
 func WithRealEnv(cb func(*RealEnv) error) error {
-	return WithMockEnv(func(mockEnv *MockEnv) error {
-		realEnv := &RealEnv{*mockEnv}
+	return WithMockEnv(func(mockEnv *MockEnv) (err error) {
+		realEnv := &RealEnv{MockEnv: *mockEnv}
 
 		config := serviceenv.NewConfiguration(&serviceenv.PachdFullConfiguration{})
 		etcdClientURL, err := url.Parse(realEnv.EtcdClient.Endpoints()[0])
@@ -239,10 +247,10 @@ func WithRealEnv(cb func(*RealEnv) error) error {
 		config.EtcdHost = etcdClientURL.Hostname()
 		config.EtcdPort = etcdClientURL.Port()
 		config.PeerPort = uint16(realEnv.MockPachd.Addr.(*net.TCPAddr).Port)
-		env := serviceenv.InitServiceEnv(config)
+		servEnv := serviceenv.InitServiceEnv(config)
 
-		pfsBlockServer, err := pfsserver.NewBlockAPIServer(
-			realEnv.Directory,
+		realEnv.PFSBlockServer, err = pfsserver.NewBlockAPIServer(
+			path.Join(realEnv.Directory, "objects"),
 			localBlockServerCacheBytes,
 			pfsserver.LocalBackendEnvVar,
 			net.JoinHostPort(config.EtcdHost, config.EtcdPort),
@@ -260,24 +268,31 @@ func WithRealEnv(cb func(*RealEnv) error) error {
 
 		txnEnv := &txnenv.TransactionEnv{}
 
-		pfsServer, err := pfsserver.NewAPIServer(env, txnEnv, etcdPrefix, treeCache, realEnv.Directory, 64*1024*1024)
+		realEnv.PFSServer, err = pfsserver.NewAPIServer(
+			servEnv,
+			txnEnv,
+			etcdPrefix,
+			treeCache,
+			path.Join(realEnv.Directory, "pfs"),
+			64*1024*1024,
+		)
 		if err != nil {
 			return err
 		}
 
-		authServer := &authtesting.InactiveAPIServer{}
+		realEnv.AuthServer = &authtesting.InactiveAPIServer{}
 
-		txnServer, err := txnserver.NewAPIServer(env, txnEnv, etcdPrefix)
+		realEnv.TransactionServer, err = txnserver.NewAPIServer(servEnv, txnEnv, etcdPrefix)
 		if err != nil {
 			return err
 		}
 
-		txnEnv.Initialize(env, txnServer, authServer, pfsServer, txnenv.NewMockPpsTransactionServer())
+		txnEnv.Initialize(servEnv, realEnv.TransactionServer, realEnv.AuthServer, realEnv.PFSServer, txnenv.NewMockPpsTransactionServer())
 
-		linkServers(&realEnv.MockPachd.Object, pfsBlockServer)
-		linkServers(&realEnv.MockPachd.PFS, pfsServer)
-		linkServers(&realEnv.MockPachd.Auth, authServer)
-		linkServers(&realEnv.MockPachd.Transaction, txnServer)
+		linkServers(&realEnv.MockPachd.Object, realEnv.PFSBlockServer)
+		linkServers(&realEnv.MockPachd.PFS, realEnv.PFSServer)
+		linkServers(&realEnv.MockPachd.Auth, realEnv.AuthServer)
+		linkServers(&realEnv.MockPachd.Transaction, realEnv.TransactionServer)
 
 		return cb(realEnv)
 	})

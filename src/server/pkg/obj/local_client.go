@@ -2,6 +2,7 @@ package obj
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,7 +14,7 @@ func NewLocalClient(root string) (Client, error) {
 	if err := os.MkdirAll(root, 0755); err != nil {
 		return nil, err
 	}
-	c := &localClient{root}
+	c := &localClient{filepath.Clean(root)}
 	if monkeyTest {
 		return &monkeyClient{c}, nil
 	}
@@ -24,8 +25,17 @@ type localClient struct {
 	root string
 }
 
+func (c *localClient) normPath(path string) string {
+	fmt.Printf("normPath(%s)\n", path)
+	path = filepath.Clean(path)
+	if !filepath.IsAbs(path) || !strings.HasPrefix(path, c.root) {
+		return filepath.Join(c.root, path)
+	}
+	return path
+}
+
 func (c *localClient) Writer(_ context.Context, path string) (io.WriteCloser, error) {
-	fullPath := filepath.Join(c.root, path)
+	fullPath := c.normPath(path)
 
 	// Create the directory since it may not exist
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
@@ -41,7 +51,7 @@ func (c *localClient) Writer(_ context.Context, path string) (io.WriteCloser, er
 }
 
 func (c *localClient) Reader(_ context.Context, path string, offset uint64, size uint64) (io.ReadCloser, error) {
-	file, err := os.Open(filepath.Join(c.root, path))
+	file, err := os.Open(c.normPath(path))
 	if err != nil {
 		return nil, err
 	}
@@ -59,11 +69,11 @@ func (c *localClient) Reader(_ context.Context, path string, offset uint64, size
 }
 
 func (c *localClient) Delete(_ context.Context, path string) error {
-	return os.Remove(filepath.Join(c.root, path))
+	return os.Remove(c.normPath(path))
 }
 
 func (c *localClient) Walk(_ context.Context, dir string, walkFn func(name string) error) error {
-	dir = filepath.Join(c.root, dir)
+	dir = c.normPath(dir)
 	fi, _ := os.Stat(dir)
 	prefix := ""
 	if fi == nil || !fi.IsDir() {
@@ -88,7 +98,7 @@ func (c *localClient) Walk(_ context.Context, dir string, walkFn func(name strin
 }
 
 func (c *localClient) Exists(_ context.Context, path string) bool {
-	_, err := os.Stat(filepath.Join(c.root, path))
+	_, err := os.Stat(c.normPath(path))
 	return err == nil
 }
 

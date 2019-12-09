@@ -122,6 +122,10 @@ func newObjBlockAPIServer(dir string, cacheBytes int64, etcdAddress string, objC
 	return s, nil
 }
 
+func (s *objBlockAPIServer) Close() error {
+	return nil
+}
+
 // watchGC watches for GC runs and invalidate all cache when GC happens.
 func (s *objBlockAPIServer) watchGC(etcdAddress string) {
 	b := backoff.NewInfiniteBackOff()
@@ -293,6 +297,7 @@ func (s *objBlockAPIServer) putObject(ctx context.Context, dataReader io.Reader,
 	block := &pfsclient.Block{Hash: uuid.NewWithoutDashes()}
 	var size int64
 	if err := func() (retErr error) {
+		fmt.Printf("writer for path: %s\n", s.blockPath(block))
 		w, err := s.objClient.Writer(ctx, s.blockPath(block))
 		if err != nil {
 			return err
@@ -305,6 +310,7 @@ func (s *objBlockAPIServer) putObject(ctx context.Context, dataReader io.Reader,
 		size, err = f(w, r)
 		return err
 	}(); err != nil {
+		fmt.Printf("writer failed\n")
 		// We throw away the delete error state here because the original error is what should be communicated
 		// back and we do not know the cause of the original error. This is just an attempt to clean up
 		// unused storage in the case that the block was actually written to object storage.
@@ -315,11 +321,13 @@ func (s *objBlockAPIServer) putObject(ctx context.Context, dataReader io.Reader,
 	// Now that we have a hash of the object we can check if it already exists.
 	resp, err := s.CheckObject(ctx, &pfsclient.CheckObjectRequest{Object: object})
 	if err != nil {
+		fmt.Printf("check object failed\n")
 		return nil, err
 	}
 	if resp.Exists {
 		// the object already exists so we delete the block we put
 		if err := s.objClient.Delete(ctx, s.blockPath(block)); err != nil {
+			fmt.Printf("delete failed\n")
 			return nil, err
 		}
 	} else {
@@ -331,9 +339,11 @@ func (s *objBlockAPIServer) putObject(ctx context.Context, dataReader io.Reader,
 			},
 		}
 		if err := s.writeProto(ctx, s.objectPath(object), blockRef); err != nil {
+			fmt.Printf("writeProto failed\n")
 			return nil, err
 		}
 	}
+	fmt.Printf("success\n")
 	return object, nil
 }
 
@@ -527,6 +537,7 @@ func (s *objBlockAPIServer) InspectObject(ctx context.Context, request *pfsclien
 	defer func(start time.Time) { s.Log(request, response, retErr, time.Since(start)) }(time.Now())
 	objectInfo := &pfsclient.ObjectInfo{}
 	sink := groupcache.ProtoSink(objectInfo)
+	fmt.Printf("objectInfoCache.Get(%s)\n", s.splitKey(request.Hash))
 	if err := s.objectInfoCache.Get(ctx, s.splitKey(request.Hash), sink); err != nil {
 		return nil, err
 	}
@@ -753,7 +764,7 @@ func (s *objBlockAPIServer) ListBlock(request *pfsclient.ListBlockRequest, listB
 
 func (s *objBlockAPIServer) isNotFoundErr(err error) bool {
 	// GG golang
-	patterns := []string{"not found", "not exist", "NotFound", "NotExist", "404"}
+	patterns := []string{"not found", "not exist", "NotFound", "NotExist", "404", "cannot find the path"}
 	errstr := err.Error()
 	for _, pattern := range patterns {
 		if strings.Contains(errstr, pattern) {
