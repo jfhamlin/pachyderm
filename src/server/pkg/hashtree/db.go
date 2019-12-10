@@ -10,6 +10,7 @@ import (
 	"os"
 	pathlib "path"
 	"regexp"
+	"runtime/debug"
 	"sort"
 	"strings"
 
@@ -123,6 +124,7 @@ func DeserializeDBHashTree(storageRoot string, r io.Reader) (_ HashTree, retErr 
 
 func newDBHashTree(file string) (HashTree, error) {
 	fmt.Printf("newDBHashTree creating db path: %s\n", file)
+	debug.PrintStack()
 	db, err := bolt.Open(file, perm, nil)
 	if err != nil {
 		return nil, err

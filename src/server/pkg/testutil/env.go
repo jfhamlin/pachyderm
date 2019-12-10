@@ -238,6 +238,13 @@ func WithRealEnv(cb func(*RealEnv) error) error {
 	return WithMockEnv(func(mockEnv *MockEnv) (err error) {
 		realEnv := &RealEnv{MockEnv: *mockEnv}
 
+		defer func() {
+			if realEnv.PFSServer != nil {
+				fmt.Printf("Closing pfs server\n")
+				realEnv.PFSServer.Close()
+			}
+		}()
+
 		config := serviceenv.NewConfiguration(&serviceenv.PachdFullConfiguration{})
 		etcdClientURL, err := url.Parse(realEnv.EtcdClient.Endpoints()[0])
 		if err != nil {

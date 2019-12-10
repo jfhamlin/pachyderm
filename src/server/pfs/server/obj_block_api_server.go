@@ -1130,8 +1130,8 @@ func (s *objBlockAPIServer) objectInfoGetter(ctx groupcache.Context, key string,
 		}
 	}
 	objectIndex, _ := s.getObjectIndex(prefix)
-	// Check if the index contains a the object we're looking for, if so read
-	// it into the cache and return
+	// Check if the index contains the object we're looking for, if so read it
+	// into the cache and return
 	if blockRef, ok := objectIndex.Objects[object.Hash]; ok {
 		result.BlockRef = blockRef
 		dest.SetProto(result)
