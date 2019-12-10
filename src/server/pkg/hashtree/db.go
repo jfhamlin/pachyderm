@@ -10,7 +10,6 @@ import (
 	"os"
 	pathlib "path"
 	"regexp"
-	"runtime/debug"
 	"sort"
 	"strings"
 
@@ -123,8 +122,6 @@ func DeserializeDBHashTree(storageRoot string, r io.Reader) (_ HashTree, retErr 
 }
 
 func newDBHashTree(file string) (HashTree, error) {
-	fmt.Printf("newDBHashTree creating db path: %s\n", file)
-	debug.PrintStack()
 	db, err := bolt.Open(file, perm, nil)
 	if err != nil {
 		return nil, err
@@ -1508,7 +1505,6 @@ func getHashTree(storageRoot string, f func(io.Writer) error) (_ HashTree, retEr
 	if err := os.MkdirAll(pathlib.Dir(filePath), 0777); err != nil {
 		return nil, err
 	}
-	fmt.Printf("getHashTree creating db path: %s (storage root %s)\n", filePath, storageRoot)
 	file, err := os.Create(filePath)
 	if err != nil {
 		return nil, err

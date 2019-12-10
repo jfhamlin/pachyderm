@@ -31,7 +31,6 @@ func evict(value interface{}) {
 func NewCache(size int) (*Cache, error) {
 	syncEvict := false
 	c, err := lru.NewWithEvict(size, func(key interface{}, value interface{}) {
-		fmt.Printf("evicting %v\n", key)
 		if syncEvict {
 			evict(value)
 		} else {
@@ -46,7 +45,6 @@ func NewCache(size int) (*Cache, error) {
 
 // Close will synchronously evict all hashtrees from the cache, cleaning up any on-disk data.
 func (c *Cache) Close() {
-	fmt.Printf("closing hashtree cache with %d items\n", c.Len())
 	*c.syncEvict = true
 	c.Purge()
 }

@@ -206,10 +206,7 @@ func WithMockEnv(cb func(*MockEnv) error) error {
 		// TODO: supervise the PachClient connection and error the errgroup if they
 		// go down
 
-		err = cb(mockEnv)
-		fmt.Printf("Shutting down mock env\n")
-		// time.Sleep(time.Minute * 1000)
-		return err
+		return cb(mockEnv)
 	})
 }
 
@@ -240,7 +237,6 @@ func WithRealEnv(cb func(*RealEnv) error) error {
 
 		defer func() {
 			if realEnv.PFSServer != nil {
-				fmt.Printf("Closing pfs server\n")
 				realEnv.PFSServer.Close()
 			}
 		}()
